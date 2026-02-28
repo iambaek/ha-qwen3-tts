@@ -2,8 +2,6 @@
 
 Home Assistant 내부(`/config`)에 Qwen3-TTS 런타임을 자체 설치해서 음성을 생성하고, `media_player`로 재생하는 커스텀 통합입니다.
 
-참고 구현: `/Users/iambaek/.openclaw/workspace/skills/qwen3-tts/qwen3-tts.skill`
-
 ## 1) 설치
 
 이 저장소의 `custom_components/ha_qwen3_tts` 폴더를 Home Assistant의 `config/custom_components/` 아래로 복사합니다.
