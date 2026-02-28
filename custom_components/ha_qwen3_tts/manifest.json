@@ -1,0 +1,12 @@
+{
+  "domain": "ha_qwen3_tts",
+  "name": "HA Qwen3 TTS",
+  "version": "0.1.0",
+  "documentation": "https://github.com/iambaek/ha-qwen3-tts",
+  "requirements": [],
+  "codeowners": [
+    "@iambaek"
+  ],
+  "iot_class": "local_push",
+  "integration_type": "service"
+}

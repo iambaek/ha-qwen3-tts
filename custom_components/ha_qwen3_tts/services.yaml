@@ -1,0 +1,32 @@
+speak:
+  name: Speak text
+  description: Generate speech with Qwen3-TTS and optionally play it on a media player.
+  fields:
+    text:
+      name: Text
+      description: Text to convert into speech.
+      required: true
+      example: 안녕하세요. Home Assistant에서 Qwen3 TTS 테스트 중입니다.
+      selector:
+        text:
+    media_player_entity_id:
+      name: Media player entity
+      description: Media player to play generated audio.
+      required: false
+      selector:
+        entity:
+          domain: media_player
+    language:
+      name: Language
+      description: Language passed to Qwen3-TTS.
+      required: false
+      example: Korean
+      selector:
+        text:
+    speaker:
+      name: Speaker
+      description: CustomVoice speaker name.
+      required: false
+      example: Sohee
+      selector:
+        text:
