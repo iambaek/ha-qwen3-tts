@@ -87,7 +87,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             try:
                 ha_base = get_url(hass, allow_internal=True, allow_external=False)
             except NoURLAvailableError:
-                ha_base = get_url(hass, allow_external=True)
+                try:
+                    ha_base = get_url(hass, allow_external=True)
+                except NoURLAvailableError as exc:
+                    raise HomeAssistantError(
+                        "HA URL을 자동 감지할 수 없습니다. "
+                        "packages/ha_qwen3_tts.yaml의 base_url을 "
+                        "전체 URL로 지정해주세요. "
+                        "예: base_url: https://your-domain.com/local/tts"
+                    ) from exc
             media_url = f"{ha_base}{base_url}/{filename}"
 
         _LOGGER.info(
