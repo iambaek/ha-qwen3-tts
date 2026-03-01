@@ -71,6 +71,13 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     await hass.async_add_executor_job(output_dir.mkdir, 0o755, True, True)
 
+    # Store config so tts.py platform can access it via hass.data
+    hass.data[DOMAIN] = {
+        CONF_ADDON_URL: addon_url,
+        CONF_DEFAULT_LANGUAGE: default_language,
+        CONF_DEFAULT_SPEAKER: default_speaker,
+    }
+
     async def handle_speak(call: ServiceCall) -> None:
         text = call.data["text"]
         language = call.data.get("language", default_language)
