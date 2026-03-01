@@ -104,10 +104,11 @@ data:
 
 ## 5) 동작 방식
 
-1. HA가 `ha_qwen3_tts.speak` 서비스를 받으면 Add-on의 `POST /tts`로 HTTP 요청
-2. Add-on(Docker)이 이미 메모리에 로딩된 Qwen3 모델로 WAV 생성 → binary 반환
-3. Custom Component가 WAV를 `output_dir`(예: `/config/www/tts`)에 저장
-4. `media_player_entity_id`가 있으면 HA 내부 URL 기반 절대 URL로 재생 명령 전송
+1. HA가 `ha_qwen3_tts.speak` 서비스를 받으면 캐시 확인 (동일 텍스트+언어+화자)
+2. 캐시 히트 시 기존 WAV 파일을 즉시 재사용, 캐시 미스 시 Add-on의 `POST /tts`로 HTTP 요청
+3. Add-on(Docker)도 자체 캐시를 확인하여, 미스 시에만 Qwen3 모델로 WAV 생성
+4. Custom Component가 WAV를 `output_dir`(예: `/config/www/tts`)에 저장 (캐시로 유지)
+5. `media_player_entity_id`가 있으면 HA 내부 URL 기반 절대 URL로 재생 명령 전송
 
 ---
 
@@ -129,5 +130,18 @@ curl -X POST http://localhost:5000/tts \
 ## 참고
 
 - TTS 요청 타임아웃: **300초**
+- 동일한 텍스트+언어+화자 조합은 캐시되어 재생성 없이 즉시 반환됩니다. 기존 WAV 파일은 삭제되지 않습니다.
 - Add-on을 별도 서버에서 직접 실행하려면 `docker build` / `docker run` 후 `addon_url`을 해당 주소로 지정하세요.
 - Add-on 재시작 시 모델이 캐시(`/data/hf_cache`)에서 로딩되므로 첫 로딩보다 빠릅니다.
+
+---
+
+## 버전 히스토리
+
+| 버전 | 변경 내용 |
+|------|----------|
+| 0.1.8 | TTS 캐시 기능 추가 — 동일 텍스트에 대해 WAV 파일 재사용 |
+| 0.1.7 | 네이티브 HA TTS 플랫폼 지원 추가 |
+| 0.1.6 | libgomp1+sox 추가, numpy<2 핀 (torch 2.2.2 호환) |
+| 0.1.5 | torch==2.2.2 핀 (aarch64 SIGILL 방지) |
+| 0.1.4 | faulthandler + subprocess를 통한 torch SIGSEGV 감지 |
