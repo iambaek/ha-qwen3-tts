@@ -12,10 +12,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_ADDON_URL,
+    CONF_CACHE_ENABLED,
     CONF_DEFAULT_LANGUAGE,
     CONF_DEFAULT_SPEAKER,
     CONF_OUTPUT_DIR,
     DEFAULT_ADDON_URL,
+    DEFAULT_CACHE_ENABLED,
     DEFAULT_LANGUAGE,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SPEAKER,
@@ -43,7 +45,8 @@ async def async_get_engine(
     default_language = domain_data.get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE)
     default_speaker = domain_data.get(CONF_DEFAULT_SPEAKER, DEFAULT_SPEAKER)
     output_dir = Path(domain_data.get(CONF_OUTPUT_DIR, DEFAULT_OUTPUT_DIR))
-    return QwenTTSProvider(hass, addon_url, default_language, default_speaker, output_dir)
+    cache_enabled = domain_data.get(CONF_CACHE_ENABLED, DEFAULT_CACHE_ENABLED)
+    return QwenTTSProvider(hass, addon_url, default_language, default_speaker, output_dir, cache_enabled)
 
 
 class QwenTTSProvider(Provider):
@@ -56,6 +59,7 @@ class QwenTTSProvider(Provider):
         default_language: str,
         default_speaker: str,
         output_dir: Path,
+        cache_enabled: bool = True,
     ) -> None:
         self.hass = hass
         self.name = "HA Qwen3 TTS"
@@ -63,6 +67,7 @@ class QwenTTSProvider(Provider):
         self._default_language = default_language
         self._default_speaker = default_speaker
         self._output_dir = output_dir
+        self._cache_enabled = cache_enabled
 
     @property
     def default_language(self) -> str:
@@ -94,11 +99,12 @@ class QwenTTSProvider(Provider):
 
         # Check local file cache
         cache_file = self._cache_path(message, language, speaker)
-        cached = await self.hass.async_add_executor_job(cache_file.is_file)
-        if cached:
-            _LOGGER.debug("TTS cache hit: %s", cache_file.name)
-            audio = await self.hass.async_add_executor_job(cache_file.read_bytes)
-            return "wav", audio
+        if self._cache_enabled:
+            cached = await self.hass.async_add_executor_job(cache_file.is_file)
+            if cached:
+                _LOGGER.debug("TTS cache hit: %s", cache_file.name)
+                audio = await self.hass.async_add_executor_job(cache_file.read_bytes)
+                return "wav", audio
 
         _LOGGER.debug(
             "TTS cache miss: language=%s speaker=%s text_len=%d",
@@ -127,14 +133,15 @@ class QwenTTSProvider(Provider):
         _LOGGER.debug("TTS audio received: %d bytes", len(audio))
 
         # Save to cache
-        def _write_cache() -> None:
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_bytes(audio)
+        if self._cache_enabled:
+            def _write_cache() -> None:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_bytes(audio)
 
-        try:
-            await self.hass.async_add_executor_job(_write_cache)
-            _LOGGER.debug("TTS cached: %s", cache_file.name)
-        except Exception:
-            _LOGGER.warning("Failed to write TTS cache file: %s", cache_file)
+            try:
+                await self.hass.async_add_executor_job(_write_cache)
+                _LOGGER.debug("TTS cached: %s", cache_file.name)
+            except Exception:
+                _LOGGER.warning("Failed to write TTS cache file: %s", cache_file)
 
         return "wav", audio

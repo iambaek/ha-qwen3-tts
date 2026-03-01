@@ -1,5 +1,5 @@
 {
-  "domain": "ha_qwen3_tts",
+  "domain": "ha_qwen_tts",
   "name": "HA Qwen3 TTS",
   "version": "0.1.8",
   "documentation": "https://github.com/iambaek/ha-qwen3-tts",

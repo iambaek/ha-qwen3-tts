@@ -18,11 +18,13 @@ from homeassistant.helpers.network import NoURLAvailableError, get_url
 from .const import (
     CONF_ADDON_URL,
     CONF_BASE_URL,
+    CONF_CACHE_ENABLED,
     CONF_DEFAULT_LANGUAGE,
     CONF_DEFAULT_SPEAKER,
     CONF_OUTPUT_DIR,
     DEFAULT_ADDON_URL,
     DEFAULT_BASE_URL,
+    DEFAULT_CACHE_ENABLED,
     DEFAULT_LANGUAGE,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SPEAKER,
@@ -42,6 +44,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): cv.string,
                 vol.Optional(CONF_DEFAULT_LANGUAGE, default=DEFAULT_LANGUAGE): cv.string,
                 vol.Optional(CONF_DEFAULT_SPEAKER, default=DEFAULT_SPEAKER): cv.string,
+                vol.Optional(CONF_CACHE_ENABLED, default=DEFAULT_CACHE_ENABLED): cv.boolean,
             }
         )
     },
@@ -67,6 +70,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     base_url = domain_config.get(CONF_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
     default_language = domain_config.get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE)
     default_speaker = domain_config.get(CONF_DEFAULT_SPEAKER, DEFAULT_SPEAKER)
+    cache_enabled = domain_config.get(CONF_CACHE_ENABLED, DEFAULT_CACHE_ENABLED)
 
     await hass.async_add_executor_job(output_dir.mkdir, 0o755, True, True)
 
@@ -76,6 +80,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         CONF_OUTPUT_DIR: str(output_dir),
         CONF_DEFAULT_LANGUAGE: default_language,
         CONF_DEFAULT_SPEAKER: default_speaker,
+        CONF_CACHE_ENABLED: cache_enabled,
     }
 
     async def handle_speak(call: ServiceCall) -> None:
@@ -102,14 +107,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 except NoURLAvailableError as exc:
                     raise HomeAssistantError(
                         "HA URL을 자동 감지할 수 없습니다. "
-                        "packages/ha_qwen3_tts.yaml의 base_url을 "
+                        "packages/ha_qwen_tts.yaml의 base_url을 "
                         "전체 URL로 지정해주세요. "
                         "예: base_url: https://your-domain.com/local/tts"
                     ) from exc
             media_url = f"{ha_base}{base_url}/{filename}"
 
         # Check cache: reuse existing file if available
-        cached = await hass.async_add_executor_job(output_path.is_file)
+        cached = cache_enabled and await hass.async_add_executor_job(output_path.is_file)
         if cached:
             _LOGGER.info("TTS cache hit: %s", filename)
         else:

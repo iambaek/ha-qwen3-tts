@@ -39,9 +39,9 @@ language: "Korean"
 
 ### 수동 설치
 
-`custom_components/ha_qwen3_tts` 폴더를 HA의 `config/custom_components/` 아래로 복사합니다.
+`custom_components/ha_qwen_tts` 폴더를 HA의 `config/custom_components/` 아래로 복사합니다.
 
-최종 경로: `/config/custom_components/ha_qwen3_tts`
+최종 경로: `/config/custom_components/ha_qwen_tts`
 
 ---
 
@@ -50,7 +50,7 @@ language: "Korean"
 모든 항목은 선택사항이며 생략하면 기본값이 적용됩니다.
 
 ```yaml
-ha_qwen3_tts:
+ha_qwen_tts:
   addon_url: http://localhost:5000   # 기본값 (Add-on이 같은 호스트에 있을 때)
   output_dir: /config/www/tts       # 기본값
   base_url: /local/tts              # 기본값 (HA 내부 URL 자동 감지)
@@ -80,7 +80,7 @@ ha_qwen3_tts:
 
 ## 4) 서비스 호출
 
-서비스: `ha_qwen3_tts.speak`
+서비스: `ha_qwen_tts.speak`
 
 | 파라미터 | 필수 | 설명 |
 |----------|------|------|
@@ -92,7 +92,7 @@ ha_qwen3_tts:
 예시:
 
 ```yaml
-service: ha_qwen3_tts.speak
+service: ha_qwen_tts.speak
 data:
   text: "안녕하세요. Home Assistant에서 Qwen3 TTS 테스트 중입니다."
   media_player_entity_id: media_player.living_room_speaker
@@ -104,7 +104,7 @@ data:
 
 ## 5) 동작 방식
 
-1. HA가 `ha_qwen3_tts.speak` 서비스를 받으면 캐시 확인 (동일 텍스트+언어+화자)
+1. HA가 `ha_qwen_tts.speak` 서비스를 받으면 캐시 확인 (동일 텍스트+언어+화자)
 2. 캐시 히트 시 기존 WAV 파일을 즉시 재사용, 캐시 미스 시 Add-on의 `POST /tts`로 HTTP 요청
 3. Add-on(Docker)도 자체 캐시를 확인하여, 미스 시에만 Qwen3 모델로 WAV 생성
 4. Custom Component가 WAV를 `output_dir`(예: `/config/www/tts`)에 저장 (캐시로 유지)
