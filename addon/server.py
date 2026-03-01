@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import signal
 import sys
 import threading
 import traceback
@@ -23,46 +24,99 @@ logging.basicConfig(
 )
 _LOGGER = logging.getLogger(__name__)
 
+
+def _flush() -> None:
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+
+def _log_memory(label: str) -> None:
+    try:
+        with open("/proc/meminfo") as f:
+            lines = {
+                line.split(":")[0]: line.split(":")[1].strip()
+                for line in f
+                if line.split(":")[0] in ("MemTotal", "MemFree", "MemAvailable")
+            }
+        _LOGGER.info(
+            "[mem] %s — total=%s  free=%s  available=%s",
+            label,
+            lines.get("MemTotal", "?"),
+            lines.get("MemFree", "?"),
+            lines.get("MemAvailable", "?"),
+        )
+    except Exception:
+        pass
+    _flush()
+
+
+def _signal_handler(signum, frame) -> None:
+    sig_name = signal.Signals(signum).name
+    _LOGGER.critical("Received signal %s (%d) — process is being killed", sig_name, signum)
+    _flush()
+    sys.exit(128 + signum)
+
+
+# Register signal handlers so kills are logged
+for _sig in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_sig, _signal_handler)
+
 _LOGGER.info("=== HA Qwen3 TTS server starting ===")
 _LOGGER.info("Python %s", sys.version)
+_LOGGER.info("Architecture: %s", os.uname().machine)
 _LOGGER.info("HF_HOME=%s  TORCH_HOME=%s", os.environ.get("HF_HOME"), os.environ.get("TORCH_HOME"))
+_log_memory("startup")
 
 # ---------------------------------------------------------------------------
 # Heavy imports — wrap individually so the exact failing package is logged
 # ---------------------------------------------------------------------------
 try:
     _LOGGER.info("Importing soundfile ...")
+    _flush()
     import soundfile as sf
     _LOGGER.info("soundfile OK")
+    _flush()
 except Exception:
     _LOGGER.critical("Failed to import soundfile:\n%s", traceback.format_exc())
+    _flush()
     sys.exit(1)
 
 try:
     _LOGGER.info("Importing torch ...")
+    _log_memory("before torch import")
     import torch
+    _log_memory("after torch import")
     _LOGGER.info("torch %s OK", torch.__version__)
+    _flush()
 except Exception:
     _LOGGER.critical("Failed to import torch:\n%s", traceback.format_exc())
+    _flush()
     sys.exit(1)
 
 try:
     _LOGGER.info("Importing flask ...")
+    _flush()
     from flask import Flask, jsonify, request, Response
     _LOGGER.info("flask OK")
+    _flush()
 except Exception:
     _LOGGER.critical("Failed to import flask:\n%s", traceback.format_exc())
+    _flush()
     sys.exit(1)
 
 try:
     _LOGGER.info("Importing qwen_tts ...")
+    _flush()
     from qwen_tts import Qwen3TTSModel
     _LOGGER.info("qwen_tts OK")
+    _flush()
 except Exception:
     _LOGGER.critical("Failed to import qwen_tts:\n%s", traceback.format_exc())
+    _flush()
     sys.exit(1)
 
 _LOGGER.info("All imports succeeded")
+_flush()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -100,6 +154,7 @@ def load_model() -> None:
     model_id = options.get("model_id", DEFAULT_MODEL_ID)
 
     _LOGGER.info("Loading model: %s", model_id)
+    _log_memory("before model load")
     try:
         with _load_lock:
             _model = Qwen3TTSModel.from_pretrained(
@@ -108,10 +163,13 @@ def load_model() -> None:
                 dtype=torch.float32,
             )
             _model_ready = True
+        _log_memory("after model load")
         _LOGGER.info("Model loaded and ready")
+        _flush()
     except Exception:
         _model_error = traceback.format_exc()
         _LOGGER.error("Failed to load model:\n%s", _model_error)
+        _flush()
 
 
 @app.get("/health")
