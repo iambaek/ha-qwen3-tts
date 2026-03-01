@@ -1,7 +1,7 @@
 {
   "domain": "ha_qwen3_tts",
   "name": "HA Qwen3 TTS",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "documentation": "https://github.com/iambaek/ha-qwen3-tts",
   "requirements": [],
   "codeowners": [

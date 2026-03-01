@@ -1,8 +1,13 @@
 FROM python:3.11-slim
 
 # Install system dependencies
+# - libsndfile1 : soundfile
+# - libgomp1   : OpenMP runtime required by torchaudio
+# - sox        : optional audio utility used by some torchaudio backends
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
+    libgomp1 \
+    sox \
     && rm -rf /var/lib/apt/lists/*
 
 # Set cache directories to /data for persistence
@@ -28,9 +33,15 @@ RUN ARCH="$(uname -m)" && \
         pip install --no-cache-dir "torch==2.2.2" "torchaudio==2.2.2"; \
     fi
 
-# Write pip constraints so that qwen_tts installation cannot upgrade torch
-RUN echo "torch==2.2.2" >  /tmp/constraints.txt && \
-    echo "torchaudio==2.2.2" >> /tmp/constraints.txt
+# Write pip constraints:
+# - torch/torchaudio pinned so qwen_tts cannot upgrade to an incompatible version
+# - numpy<2 required because torch 2.2.2 was built against NumPy 1.x
+RUN echo "torch==2.2.2"    >  /tmp/constraints.txt && \
+    echo "torchaudio==2.2.2" >> /tmp/constraints.txt && \
+    echo "numpy<2"           >> /tmp/constraints.txt
+
+# Pre-install numpy<2 before requirements.txt so it is already satisfied
+RUN pip install --no-cache-dir "numpy<2"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -c /tmp/constraints.txt
