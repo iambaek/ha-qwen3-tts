@@ -13,21 +13,27 @@ ENV MALLOC_ARENA_MAX=2
 
 WORKDIR /app
 
-# Install torch + torchaudio
-# amd64: use PyTorch CPU-only wheel index (smaller, no CUDA)
-# aarch64: CPU wheel index has no ARM builds — fall back to PyPI
+# Pin torch to 2.2.2 — aarch64 compatible (Cortex-A72/A76, no SVE required).
+# torch 2.5+ is compiled with SVE/other extensions not available on RPi 4/5,
+# causing SIGILL ("Illegal instruction") on import.
+#
+# amd64 : use PyTorch CPU-only wheel index (no CUDA, smaller)
+# aarch64: use PyPI (CPU wheel index has no ARM builds)
 RUN ARCH="$(uname -m)" && \
+    echo "Building for arch: $ARCH" && \
     if [ "$ARCH" = "x86_64" ]; then \
-        pip install --no-cache-dir torch torchaudio \
+        pip install --no-cache-dir "torch==2.2.2" "torchaudio==2.2.2" \
             --index-url https://download.pytorch.org/whl/cpu; \
     else \
-        echo "Detected arch=$ARCH, installing torch from PyPI" && \
-        pip install --no-cache-dir torch torchaudio; \
+        pip install --no-cache-dir "torch==2.2.2" "torchaudio==2.2.2"; \
     fi
 
-# Install remaining dependencies
+# Write pip constraints so that qwen_tts installation cannot upgrade torch
+RUN echo "torch==2.2.2" >  /tmp/constraints.txt && \
+    echo "torchaudio==2.2.2" >> /tmp/constraints.txt
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -c /tmp/constraints.txt
 
 COPY server.py .
 COPY run.sh .
