@@ -1,6 +1,6 @@
 name: "HA Qwen3 TTS"
 description: "Local Qwen3-TTS text-to-speech HTTP server"
-version: "0.1.7"
+version: "0.1.8"
 slug: ha_qwen3_tts
 init: false
 arch:

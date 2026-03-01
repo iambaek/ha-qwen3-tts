@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import hashlib
 import logging
 from pathlib import Path
-from uuid import uuid4
 
 import voluptuous as vol
 
@@ -74,6 +73,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     # Store config so tts.py platform can access it via hass.data
     hass.data[DOMAIN] = {
         CONF_ADDON_URL: addon_url,
+        CONF_OUTPUT_DIR: str(output_dir),
         CONF_DEFAULT_LANGUAGE: default_language,
         CONF_DEFAULT_SPEAKER: default_speaker,
     }
@@ -84,8 +84,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         speaker = call.data.get("speaker", default_speaker)
         entity_id = call.data.get(CONF_MEDIA_PLAYER_ENTITY_ID) or call.data.get(CONF_ENTITY_ID)
 
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"qwen3_tts_{ts}_{uuid4().hex[:8]}.wav"
+        # Cache key: hash of text + language + speaker
+        cache_key = hashlib.sha256(
+            f"{text}|{language}|{speaker}".encode()
+        ).hexdigest()[:16]
+        filename = f"qwen3_tts_{cache_key}.wav"
         output_path = output_dir / filename
 
         if base_url.startswith(("http://", "https://")):
@@ -105,34 +108,40 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                     ) from exc
             media_url = f"{ha_base}{base_url}/{filename}"
 
-        _LOGGER.info(
-            "Requesting TTS from Add-on: speaker=%s language=%s", speaker, language
-        )
-
-        session = async_get_clientsession(hass)
-        try:
-            resp = await session.post(
-                f"{addon_url}/tts",
-                json={"text": text, "language": language, "speaker": speaker},
-                timeout=300,
-            )
-        except Exception as exc:
-            raise HomeAssistantError(f"Failed to reach TTS Add-on at {addon_url}: {exc}") from exc
-
-        if resp.status != 200:
-            body = await resp.text()
-            raise HomeAssistantError(
-                f"TTS Add-on returned HTTP {resp.status}: {body}"
+        # Check cache: reuse existing file if available
+        cached = await hass.async_add_executor_job(output_path.is_file)
+        if cached:
+            _LOGGER.info("TTS cache hit: %s", filename)
+        else:
+            _LOGGER.info(
+                "TTS cache miss, requesting from Add-on: speaker=%s language=%s",
+                speaker, language,
             )
 
-        wav_bytes = await resp.read()
+            session = async_get_clientsession(hass)
+            try:
+                resp = await session.post(
+                    f"{addon_url}/tts",
+                    json={"text": text, "language": language, "speaker": speaker},
+                    timeout=300,
+                )
+            except Exception as exc:
+                raise HomeAssistantError(f"Failed to reach TTS Add-on at {addon_url}: {exc}") from exc
 
-        def _write_wav() -> None:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(wav_bytes)
+            if resp.status != 200:
+                body = await resp.text()
+                raise HomeAssistantError(
+                    f"TTS Add-on returned HTTP {resp.status}: {body}"
+                )
 
-        await hass.async_add_executor_job(_write_wav)
-        _LOGGER.info("TTS saved: %s", media_url)
+            wav_bytes = await resp.read()
+
+            def _write_wav() -> None:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(wav_bytes)
+
+            await hass.async_add_executor_job(_write_wav)
+            _LOGGER.info("TTS saved: %s", media_url)
 
         if entity_id:
             await hass.services.async_call(

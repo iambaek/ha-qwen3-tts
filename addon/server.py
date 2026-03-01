@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import faulthandler
+import hashlib
 import io
 import json
 import logging
@@ -153,9 +154,12 @@ _flush()
 # Constants
 # ---------------------------------------------------------------------------
 OPTIONS_PATH = "/data/options.json"
+CACHE_DIR = "/data/tts_cache"
 DEFAULT_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 DEFAULT_SPEAKER = "Sohee"
 DEFAULT_LANGUAGE = "Korean"
+
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 app = Flask(__name__)
 
@@ -209,6 +213,14 @@ def health() -> Response:
     return jsonify({"status": "ok", "model_ready": _model_ready})
 
 
+def _cache_path(text: str, language: str, speaker: str) -> str:
+    """Return the file path for a cached TTS result."""
+    cache_key = hashlib.sha256(
+        f"{text}|{language}|{speaker}".encode()
+    ).hexdigest()[:16]
+    return os.path.join(CACHE_DIR, f"{cache_key}.wav")
+
+
 @app.post("/tts")
 def tts() -> Response:
     """Generate speech and return WAV binary.
@@ -232,7 +244,14 @@ def tts() -> Response:
     language = body.get("language") or options.get("language", DEFAULT_LANGUAGE)
     speaker = body.get("speaker") or options.get("speaker", DEFAULT_SPEAKER)
 
-    _LOGGER.info("Generating TTS: speaker=%s language=%s text_len=%d", speaker, language, len(text))
+    # Check cache first
+    cache_file = _cache_path(text, language, speaker)
+    if os.path.isfile(cache_file):
+        _LOGGER.info("TTS cache hit: %s", os.path.basename(cache_file))
+        with open(cache_file, "rb") as f:
+            return Response(f.read(), mimetype="audio/wav")
+
+    _LOGGER.info("TTS cache miss, generating: speaker=%s language=%s text_len=%d", speaker, language, len(text))
 
     try:
         wavs, sample_rate = _model.generate_custom_voice(
@@ -247,9 +266,17 @@ def tts() -> Response:
     buf = io.BytesIO()
     sf.write(buf, wavs[0], sample_rate, format="WAV")
     buf.seek(0)
+    wav_bytes = buf.read()
 
-    _LOGGER.info("TTS generated successfully")
-    return Response(buf.read(), mimetype="audio/wav")
+    # Save to cache
+    try:
+        with open(cache_file, "wb") as f:
+            f.write(wav_bytes)
+        _LOGGER.info("TTS cached: %s", os.path.basename(cache_file))
+    except Exception:
+        _LOGGER.warning("Failed to write cache file: %s", traceback.format_exc())
+
+    return Response(wav_bytes, mimetype="audio/wav")
 
 
 if __name__ == "__main__":
