@@ -11,9 +11,10 @@ ENV TORCH_HOME=/data/torch_cache
 
 WORKDIR /app
 
-# Install torch (CPU-only wheel) separately first for layer caching
+# Install torch + torchaudio (CPU-only wheels) separately first for layer caching
+# torchaudio must be pre-installed from the CPU index before qwen_tts pulls it in
 RUN pip install --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu
+    torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies
 COPY requirements.txt .
