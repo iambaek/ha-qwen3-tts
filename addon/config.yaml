@@ -1,0 +1,22 @@
+name: "HA Qwen3 TTS"
+description: "Local Qwen3-TTS text-to-speech HTTP server"
+version: "0.1.0"
+slug: ha_qwen3_tts
+init: false
+arch:
+  - aarch64
+  - amd64
+ports:
+  5000/tcp: 5000
+ports_description:
+  5000/tcp: "TTS HTTP API"
+map:
+  - data:rw
+options:
+  model_id: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+  speaker: "Sohee"
+  language: "Korean"
+schema:
+  model_id: str
+  speaker: str
+  language: str

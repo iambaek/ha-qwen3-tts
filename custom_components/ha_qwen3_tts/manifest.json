@@ -7,6 +7,6 @@
   "codeowners": [
     "@iambaek"
   ],
-  "iot_class": "local_push",
+  "iot_class": "local_polling",
   "integration_type": "service"
 }

@@ -1,11 +1,9 @@
-"""Home Assistant integration for local Qwen3-TTS service."""
+"""Home Assistant integration for local Qwen3-TTS Add-on."""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 import logging
-import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,24 +13,19 @@ from homeassistant.const import CONF_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import (
-    CONF_AUTO_INSTALL,
+    CONF_ADDON_URL,
     CONF_BASE_URL,
     CONF_DEFAULT_LANGUAGE,
     CONF_DEFAULT_SPEAKER,
     CONF_OUTPUT_DIR,
-    CONF_PYTHON_BIN,
-    CONF_QWEN_PACKAGE_URL,
-    CONF_RUNTIME_DIR,
-    DEFAULT_AUTO_INSTALL,
+    DEFAULT_ADDON_URL,
     DEFAULT_BASE_URL,
     DEFAULT_LANGUAGE,
     DEFAULT_OUTPUT_DIR,
-    DEFAULT_PYTHON_BIN,
-    DEFAULT_QWEN_PACKAGE_URL,
-    DEFAULT_RUNTIME_DIR,
     DEFAULT_SPEAKER,
     DOMAIN,
     SERVICE_SPEAK,
@@ -45,10 +38,7 @@ CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
-                vol.Optional(CONF_RUNTIME_DIR, default=DEFAULT_RUNTIME_DIR): cv.string,
-                vol.Optional(CONF_PYTHON_BIN, default=DEFAULT_PYTHON_BIN): cv.string,
-                vol.Optional(CONF_AUTO_INSTALL, default=DEFAULT_AUTO_INSTALL): cv.boolean,
-                vol.Optional(CONF_QWEN_PACKAGE_URL, default=DEFAULT_QWEN_PACKAGE_URL): cv.string,
+                vol.Optional(CONF_ADDON_URL, default=DEFAULT_ADDON_URL): cv.string,
                 vol.Optional(CONF_OUTPUT_DIR, default=DEFAULT_OUTPUT_DIR): cv.string,
                 vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): cv.string,
                 vol.Optional(CONF_DEFAULT_LANGUAGE, default=DEFAULT_LANGUAGE): cv.string,
@@ -70,120 +60,18 @@ SERVICE_SCHEMA_SPEAK = vol.Schema(
 )
 
 
-async def _run_cmd(
-    *cmd: str,
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=cwd,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    out = stdout.decode("utf-8", errors="ignore").strip()
-    err = stderr.decode("utf-8", errors="ignore").strip()
-    return process.returncode, out, err
-
-
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up integration from YAML config."""
     domain_config = config.get(DOMAIN, {})
-    runtime_dir = Path(domain_config.get(CONF_RUNTIME_DIR, DEFAULT_RUNTIME_DIR))
-    python_bin = domain_config.get(CONF_PYTHON_BIN, DEFAULT_PYTHON_BIN)
-    auto_install = domain_config.get(CONF_AUTO_INSTALL, DEFAULT_AUTO_INSTALL)
-    qwen_package_url = domain_config.get(CONF_QWEN_PACKAGE_URL, DEFAULT_QWEN_PACKAGE_URL)
+    addon_url = domain_config.get(CONF_ADDON_URL, DEFAULT_ADDON_URL).rstrip("/")
     output_dir = Path(domain_config.get(CONF_OUTPUT_DIR, DEFAULT_OUTPUT_DIR))
     base_url = domain_config.get(CONF_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
     default_language = domain_config.get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE)
     default_speaker = domain_config.get(CONF_DEFAULT_SPEAKER, DEFAULT_SPEAKER)
 
-    script_path = Path(__file__).with_name("qwen3_generate.py")
-    venv_dir = Path(python_bin).parents[1]
-    hf_home = runtime_dir / "hf_cache"
-    torch_home = runtime_dir / "torch_cache"
-    runtime_env = os.environ.copy()
-    runtime_env["HF_HOME"] = str(hf_home)
-    runtime_env["TORCH_HOME"] = str(torch_home)
-    runtime_ready = False
-    install_lock = asyncio.Lock()
-
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    async def ensure_runtime() -> None:
-        nonlocal runtime_ready
-        if runtime_ready:
-            return
-
-        async with install_lock:
-            if runtime_ready:
-                return
-
-            if not Path(python_bin).exists():
-                if not auto_install:
-                    raise HomeAssistantError(
-                        f"Python runtime not found: {python_bin}. "
-                        "Set auto_install: true or provide a valid python_bin."
-                    )
-                _LOGGER.info("Creating virtualenv for Qwen3-TTS at %s", venv_dir)
-                code, _, err = await _run_cmd("python3", "-m", "venv", str(venv_dir))
-                if code != 0:
-                    raise HomeAssistantError(f"Failed to create venv: {err}")
-
-            check_code, _, _ = await _run_cmd(
-                python_bin, "-c", "import qwen_tts, soundfile, torch"
-            )
-            if check_code == 0:
-                runtime_ready = True
-                return
-
-            if not auto_install:
-                raise HomeAssistantError(
-                    "Qwen3-TTS dependencies are missing. "
-                    "Set auto_install: true to install automatically."
-                )
-
-            _LOGGER.info("Installing Qwen3-TTS dependencies into %s", venv_dir)
-            code, _, err = await _run_cmd(
-                python_bin,
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "pip",
-                "setuptools",
-                "wheel",
-            )
-            if code != 0:
-                raise HomeAssistantError(f"Failed to upgrade pip tooling: {err}")
-
-            code, _, err = await _run_cmd(
-                python_bin,
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                qwen_package_url,
-                "soundfile",
-            )
-            if code != 0:
-                raise HomeAssistantError(f"Failed to install Qwen3-TTS package: {err}")
-
-            verify_code, _, verify_err = await _run_cmd(
-                python_bin, "-c", "import qwen_tts, soundfile, torch"
-            )
-            if verify_code != 0:
-                raise HomeAssistantError(f"Runtime verification failed: {verify_err}")
-
-            runtime_ready = True
-            _LOGGER.info("Qwen3-TTS runtime is ready")
+    await hass.async_add_executor_job(output_dir.mkdir, 0o755, True, True)
 
     async def handle_speak(call: ServiceCall) -> None:
-        await ensure_runtime()
-
         text = call.data["text"]
         language = call.data.get("language", default_language)
         speaker = call.data.get("speaker", default_speaker)
@@ -202,43 +90,34 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 ha_base = get_url(hass, allow_external=True)
             media_url = f"{ha_base}{base_url}/{filename}"
 
-        cmd = [
-            python_bin,
-            str(script_path),
-            "--text",
-            text,
-            "--language",
-            language,
-            "--speaker",
-            speaker,
-            "--output",
-            str(output_path),
-        ]
-        _LOGGER.info("Generating TTS: speaker=%s language=%s output=%s", speaker, language, output_path)
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(runtime_dir),
-            env=runtime_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        _LOGGER.info(
+            "Requesting TTS from Add-on: speaker=%s language=%s", speaker, language
         )
+
+        session = async_get_clientsession(hass)
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
-            raise HomeAssistantError("TTS generation timed out after 5 minutes")
+            resp = await session.post(
+                f"{addon_url}/tts",
+                json={"text": text, "language": language, "speaker": speaker},
+                timeout=300,
+            )
+        except Exception as exc:
+            raise HomeAssistantError(f"Failed to reach TTS Add-on at {addon_url}: {exc}") from exc
 
-        if process.returncode != 0:
-            err_msg = stderr.decode("utf-8", errors="ignore").strip()
-            _LOGGER.error("Qwen3-TTS failed (code=%s): %s", process.returncode, err_msg)
-            raise HomeAssistantError(f"TTS generation failed: {err_msg}")
+        if resp.status != 200:
+            body = await resp.text()
+            raise HomeAssistantError(
+                f"TTS Add-on returned HTTP {resp.status}: {body}"
+            )
 
-        if stdout:
-            _LOGGER.debug("Qwen3-TTS stdout: %s", stdout.decode("utf-8", errors="ignore").strip())
+        wav_bytes = await resp.read()
 
-        _LOGGER.info("TTS generated: %s", media_url)
+        def _write_wav() -> None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(wav_bytes)
+
+        await hass.async_add_executor_job(_write_wav)
+        _LOGGER.info("TTS saved: %s", media_url)
 
         if entity_id:
             await hass.services.async_call(
