@@ -3,14 +3,19 @@
 
 from __future__ import annotations
 
+import faulthandler
 import io
 import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 import traceback
+
+# Enable faulthandler FIRST — dumps C-level stack trace to stderr on SIGSEGV
+faulthandler.enable(file=sys.stderr, all_threads=True)
 
 # ---------------------------------------------------------------------------
 # Logging must be configured BEFORE any heavy imports so that import errors
@@ -57,7 +62,6 @@ def _signal_handler(signum, frame) -> None:
     sys.exit(128 + signum)
 
 
-# Register signal handlers so kills are logged
 for _sig in (signal.SIGTERM, signal.SIGHUP):
     signal.signal(_sig, _signal_handler)
 
@@ -66,6 +70,33 @@ _LOGGER.info("Python %s", sys.version)
 _LOGGER.info("Architecture: %s", os.uname().machine)
 _LOGGER.info("HF_HOME=%s  TORCH_HOME=%s", os.environ.get("HF_HOME"), os.environ.get("TORCH_HOME"))
 _log_memory("startup")
+
+# ---------------------------------------------------------------------------
+# torch import sanity check in a subprocess BEFORE importing in this process.
+# If torch crashes at the C level (SIGSEGV), the child process dies and we
+# capture its exit code / stderr here instead of crashing the server silently.
+# ---------------------------------------------------------------------------
+_LOGGER.info("Running torch import sanity check in subprocess ...")
+_flush()
+_torch_check = subprocess.run(
+    [sys.executable, "-c",
+     "import faulthandler, sys; faulthandler.enable(file=sys.stderr); "
+     "import torch; print('torch', torch.__version__, 'OK')"],
+    capture_output=True,
+    text=True,
+    timeout=120,
+)
+if _torch_check.returncode != 0:
+    _LOGGER.critical(
+        "torch subprocess check FAILED (exit=%d)\nstdout: %s\nstderr: %s",
+        _torch_check.returncode,
+        _torch_check.stdout.strip(),
+        _torch_check.stderr.strip(),
+    )
+    _flush()
+    sys.exit(1)
+_LOGGER.info("torch subprocess check passed: %s", _torch_check.stdout.strip())
+_flush()
 
 # ---------------------------------------------------------------------------
 # Heavy imports — wrap individually so the exact failing package is logged
