@@ -15,6 +15,7 @@ from homeassistant.const import CONF_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import (
     CONF_AUTO_INSTALL,
@@ -90,14 +91,14 @@ async def _run_cmd(
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up integration from YAML config."""
     domain_config = config.get(DOMAIN, {})
-    runtime_dir = Path(domain_config[CONF_RUNTIME_DIR])
-    python_bin = domain_config[CONF_PYTHON_BIN]
-    auto_install = domain_config[CONF_AUTO_INSTALL]
-    qwen_package_url = domain_config[CONF_QWEN_PACKAGE_URL]
-    output_dir = Path(domain_config[CONF_OUTPUT_DIR])
-    base_url = domain_config[CONF_BASE_URL].rstrip("/")
-    default_language = domain_config[CONF_DEFAULT_LANGUAGE]
-    default_speaker = domain_config[CONF_DEFAULT_SPEAKER]
+    runtime_dir = Path(domain_config.get(CONF_RUNTIME_DIR, DEFAULT_RUNTIME_DIR))
+    python_bin = domain_config.get(CONF_PYTHON_BIN, DEFAULT_PYTHON_BIN)
+    auto_install = domain_config.get(CONF_AUTO_INSTALL, DEFAULT_AUTO_INSTALL)
+    qwen_package_url = domain_config.get(CONF_QWEN_PACKAGE_URL, DEFAULT_QWEN_PACKAGE_URL)
+    output_dir = Path(domain_config.get(CONF_OUTPUT_DIR, DEFAULT_OUTPUT_DIR))
+    base_url = domain_config.get(CONF_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
+    default_language = domain_config.get(CONF_DEFAULT_LANGUAGE, DEFAULT_LANGUAGE)
+    default_speaker = domain_config.get(CONF_DEFAULT_SPEAKER, DEFAULT_SPEAKER)
 
     script_path = Path(__file__).with_name("qwen3_generate.py")
     venv_dir = Path(python_bin).parents[1]
@@ -191,7 +192,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         filename = f"qwen3_tts_{ts}_{uuid4().hex[:8]}.wav"
         output_path = output_dir / filename
-        media_url = f"{base_url}/{filename}"
+
+        if base_url.startswith(("http://", "https://")):
+            media_url = f"{base_url}/{filename}"
+        else:
+            try:
+                ha_base = get_url(hass, allow_internal=True, allow_external=False)
+            except NoURLAvailableError:
+                ha_base = get_url(hass, allow_external=True)
+            media_url = f"{ha_base}{base_url}/{filename}"
 
         cmd = [
             python_bin,
@@ -214,15 +223,17 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            raise HomeAssistantError("TTS generation timed out after 5 minutes")
 
         if process.returncode != 0:
-            _LOGGER.error(
-                "Qwen3-TTS failed (code=%s): %s",
-                process.returncode,
-                stderr.decode("utf-8", errors="ignore").strip(),
-            )
-            return
+            err_msg = stderr.decode("utf-8", errors="ignore").strip()
+            _LOGGER.error("Qwen3-TTS failed (code=%s): %s", process.returncode, err_msg)
+            raise HomeAssistantError(f"TTS generation failed: {err_msg}")
 
         if stdout:
             _LOGGER.debug("Qwen3-TTS stdout: %s", stdout.decode("utf-8", errors="ignore").strip())
