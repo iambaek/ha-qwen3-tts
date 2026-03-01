@@ -7,20 +7,66 @@ import io
 import json
 import logging
 import os
-from pathlib import Path
+import sys
 import threading
+import traceback
 
-import soundfile as sf
-import torch
-from flask import Flask, jsonify, request, Response
-from qwen_tts import Qwen3TTSModel
-
+# ---------------------------------------------------------------------------
+# Logging must be configured BEFORE any heavy imports so that import errors
+# are captured and visible in the Add-on log panel.
+# ---------------------------------------------------------------------------
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    stream=sys.stdout,
+    force=True,
 )
 _LOGGER = logging.getLogger(__name__)
 
+_LOGGER.info("=== HA Qwen3 TTS server starting ===")
+_LOGGER.info("Python %s", sys.version)
+_LOGGER.info("HF_HOME=%s  TORCH_HOME=%s", os.environ.get("HF_HOME"), os.environ.get("TORCH_HOME"))
+
+# ---------------------------------------------------------------------------
+# Heavy imports — wrap individually so the exact failing package is logged
+# ---------------------------------------------------------------------------
+try:
+    _LOGGER.info("Importing soundfile ...")
+    import soundfile as sf
+    _LOGGER.info("soundfile OK")
+except Exception:
+    _LOGGER.critical("Failed to import soundfile:\n%s", traceback.format_exc())
+    sys.exit(1)
+
+try:
+    _LOGGER.info("Importing torch ...")
+    import torch
+    _LOGGER.info("torch %s OK", torch.__version__)
+except Exception:
+    _LOGGER.critical("Failed to import torch:\n%s", traceback.format_exc())
+    sys.exit(1)
+
+try:
+    _LOGGER.info("Importing flask ...")
+    from flask import Flask, jsonify, request, Response
+    _LOGGER.info("flask OK")
+except Exception:
+    _LOGGER.critical("Failed to import flask:\n%s", traceback.format_exc())
+    sys.exit(1)
+
+try:
+    _LOGGER.info("Importing qwen_tts ...")
+    from qwen_tts import Qwen3TTSModel
+    _LOGGER.info("qwen_tts OK")
+except Exception:
+    _LOGGER.critical("Failed to import qwen_tts:\n%s", traceback.format_exc())
+    sys.exit(1)
+
+_LOGGER.info("All imports succeeded")
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 OPTIONS_PATH = "/data/options.json"
 DEFAULT_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 DEFAULT_SPEAKER = "Sohee"
@@ -40,7 +86,7 @@ def load_options() -> dict:
         with open(OPTIONS_PATH) as f:
             return json.load(f)
     except FileNotFoundError:
-        _LOGGER.warning("options.json not found, using defaults")
+        _LOGGER.warning("options.json not found at %s, using defaults", OPTIONS_PATH)
         return {}
     except json.JSONDecodeError as exc:
         _LOGGER.error("Failed to parse options.json: %s", exc)
@@ -48,7 +94,7 @@ def load_options() -> dict:
 
 
 def load_model() -> None:
-    """Load the Qwen3-TTS model. Called once at startup in a background thread."""
+    """Load the Qwen3-TTS model once at startup in a background thread."""
     global _model, _model_ready, _model_error
     options = load_options()
     model_id = options.get("model_id", DEFAULT_MODEL_ID)
@@ -63,9 +109,9 @@ def load_model() -> None:
             )
             _model_ready = True
         _LOGGER.info("Model loaded and ready")
-    except Exception as exc:
-        _model_error = str(exc)
-        _LOGGER.error("Failed to load model: %s", exc)
+    except Exception:
+        _model_error = traceback.format_exc()
+        _LOGGER.error("Failed to load model:\n%s", _model_error)
 
 
 @app.get("/health")
@@ -105,9 +151,9 @@ def tts() -> Response:
             language=language,
             speaker=speaker,
         )
-    except Exception as exc:
-        _LOGGER.error("TTS generation failed: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    except Exception:
+        _LOGGER.error("TTS generation failed:\n%s", traceback.format_exc())
+        return jsonify({"error": traceback.format_exc()}), 500
 
     buf = io.BytesIO()
     sf.write(buf, wavs[0], sample_rate, format="WAV")
@@ -118,9 +164,10 @@ def tts() -> Response:
 
 
 if __name__ == "__main__":
-    # Load model in a background thread so the health endpoint is immediately available
+    _LOGGER.info("Starting model loader thread ...")
     thread = threading.Thread(target=load_model, daemon=True)
     thread.start()
 
     port = int(os.environ.get("PORT", 5000))
+    _LOGGER.info("Starting Flask on 0.0.0.0:%d", port)
     app.run(host="0.0.0.0", port=port)
